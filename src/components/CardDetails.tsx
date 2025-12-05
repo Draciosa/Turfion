@@ -1,57 +1,52 @@
-import React, { useState } from 'react';
+// components/CardDetails.tsx
+import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Calendar, Clock, CalendarCheck, X, MapPin } from 'lucide-react';
-import { useEffect } from 'react';
+import { ArrowLeft, CalendarDays, Clock, MapPin } from 'lucide-react';
 import { doc, getDoc } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { useAuth } from '../contexts/AuthContext';
 
-type CardData = {
+interface CardData {
   id: string;
   title: string;
-  imageUrl: string;
+  imageUrl?: string;
   type: string;
-  openingTime: string;
-  closingTime: string;
+  openingTime?: string;
+  closingTime?: string;
   pricePerHour: number;
   location: string;
-  description: string;
-  userId: string;
-  createdAt: any;
-  Card_ID: string;
-};
+  description?: string;
+}
 
 const CardDetails: React.FC = () => {
-  const { id } = useParams();
+  const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const { user } = useAuth();
+
   const [card, setCard] = useState<CardData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [showLoginPrompt, setShowLoginPrompt] = useState(false);
 
+  const fallbackImage = 'https://images.pexels.com/photos/274506/pexels-photo-274506.jpeg?auto=compress&cs=tinysrgb&w=1260&h=750&dpr=2';
+
   useEffect(() => {
     const fetchCard = async () => {
       if (!id) {
-        setError('Card ID not provided');
+        setError('Invalid venue link');
         setLoading(false);
         return;
       }
 
       try {
-        const cardDoc = await getDoc(doc(db, 'cards', id));
-        
-        if (cardDoc.exists()) {
-          setCard({
-            id: cardDoc.id,
-            ...cardDoc.data()
-          } as CardData);
+        const docSnap = await getDoc(doc(db, 'cards', id));
+        if (docSnap.exists()) {
+          setCard({ id: docSnap.id, ...docSnap.data() } as CardData);
         } else {
-          setError('Card not found');
+          setError('Venue not found');
         }
       } catch (err) {
-        console.error('Error fetching card:', err);
-        setError('Failed to load card details');
+        setError('Failed to load venue details');
       } finally {
         setLoading(false);
       }
@@ -63,97 +58,46 @@ const CardDetails: React.FC = () => {
   const handleBookNow = () => {
     if (!user) {
       setShowLoginPrompt(true);
-      return;
+    } else {
+      navigate(`/book/${id}`);
     }
-    navigate(`/book/${id}`);
   };
 
-  const getGoogleMapsEmbedUrl = (location: string) => {
-    const encodedLocation = encodeURIComponent(location);
-    return `https://www.google.com/maps?q=${encodedLocation}&output=embed`;
+  const formatTime = (time?: string) => {
+    if (!time) return null;
+    const [hour, minute] = time.split(':').map(Number);
+    const period = hour >= 12 ? 'PM' : 'AM';
+    const displayHour = hour === 0 ? 12 : hour > 12 ? hour - 12 : hour;
+    return `${displayHour}:${minute.toString().padStart(2, '0')} ${period}`;
   };
 
-  const LoginPromptModal = () => (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-xl shadow-2xl max-w-md w-full">
-        <div className="flex justify-between items-center p-4 sm:p-6 border-b border-gray-200">
-          <h2 className="text-xl sm:text-2xl font-bold text-gray-900">Login Required</h2>
-          <button
-            onClick={() => setShowLoginPrompt(false)}
-            className="p-2 hover:bg-gray-100 rounded-full transition-colors duration-200"
-          >
-            <X className="w-5 h-5 text-gray-500" />
-          </button>
-        </div>
-        <div className="p-4 sm:p-6">
-          <div className="text-center mb-6">
-            <div className="w-16 h-16 bg-blue-100 rounded-full flex items-center justify-center mx-auto mb-4">
-              <CalendarCheck className="w-8 h-8 text-blue-600" />
-            </div>
-            <h3 className="text-lg font-semibold text-gray-900 mb-2">Ready to Book?</h3>
-            <p className="text-gray-600 text-sm sm:text-base">
-              You need to be logged in to make a booking. Please sign in to continue with your reservation.
-            </p>
-          </div>
-          <div className="space-y-3">
-            <button
-              onClick={() => {
-                setShowLoginPrompt(false);
-                navigate('/');
-                setTimeout(() => {
-                  const loginButton = document.querySelector('[data-login-trigger]') as HTMLButtonElement;
-                  if (loginButton) loginButton.click();
-                }, 100);
-              }}
-              className="w-full bg-blue-600 text-white py-3 px-6 rounded-lg hover:bg-blue-700 transition-colors duration-200 font-medium"
-            >
-              Sign In to Book
-            </button>
-            <button
-              onClick={() => setShowLoginPrompt(false)}
-              className="w-full bg-gray-100 text-gray-700 py-3 px-6 rounded-lg hover:bg-gray-200 transition-colors duration-200 font-medium"
-            >
-              Maybe Later
-            </button>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
+  const opening = formatTime(card?.openingTime);
+  const closing = formatTime(card?.closingTime);
+
+  // Simple Google Maps URL — no API key needed!
+  const googleMapsUrl = card?.location
+    ? `https://maps.google.com/maps?q=${encodeURIComponent(card.location)}&output=embed`
+    : '';
 
   if (loading) {
     return (
-      <div className="container mx-auto px-4 py-8">
-        <div className="flex justify-center items-center min-h-[400px]">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
-        </div>
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-4 border-blue-600"></div>
       </div>
     );
   }
 
   if (error || !card) {
     return (
-      <div className="container mx-auto px-4 py-8">
-        <button
-          onClick={() => navigate('/')}
-          className="mb-6 inline-flex items-center text-blue-600 hover:text-blue-800 transition-colors duration-200"
-        >
-          <ArrowLeft className="w-4 h-4 mr-2" />
-          Back to home
+      <div className="container mx-auto px-4 py-12 text-center">
+        <button onClick={() => navigate('/')} className="mb-8 inline-flex items-center text-blue-600 hover:text-blue-800 font-medium">
+          <ArrowLeft className="w-5 h-5 mr-2" /> Back to Home
         </button>
-        <div className="text-center bg-white rounded-xl shadow-lg p-8 sm:p-12">
-          <h2 className="text-xl sm:text-2xl font-bold text-gray-900 mb-4">
-            {error || 'Card not found'}
-          </h2>
-          <p className="text-gray-600 mb-6 text-sm sm:text-base">
-            The card you're looking for doesn't exist or has been removed.
-          </p>
-          <button
-            onClick={() => navigate('/')}
-            className="inline-flex items-center px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors duration-200"
-          >
-            <ArrowLeft className="w-4 h-4 mr-2" />
-            Return Home
+        <div className="max-w-md mx-auto bg-white rounded-2xl shadow-xl p-10">
+          <h2 className="text-2xl font-bold text-gray-900 mb-4">Oops! Venue Not Found</h2>
+          <p className="text-gray-600 mb-8">{error || "The venue you're looking for doesn't exist."}</p>
+          <button onClick={() => navigate('/')} className="w-full bg-blue-600 text-white py-3 rounded-xl hover:bg-blue-700 font-medium">
+            Browse All Venues
           </button>
         </div>
       </div>
@@ -161,176 +105,185 @@ const CardDetails: React.FC = () => {
   }
 
   return (
-    <div className="container mx-auto px-4 py-8">
-      <button
-        onClick={() => navigate('/')}
-        className="mb-6 inline-flex items-center text-blue-600 hover:text-blue-800 transition-colors duration-200 font-medium"
-      >
-        <ArrowLeft className="w-4 h-4 mr-2" />
-        Back to home
-      </button>
+    <div className="min-h-screen bg-gray-50">
+      <div className="container mx-auto px-4 py-6 lg:py-10 max-w-7xl">
+        {/* Back Button */}
+        <button
+          onClick={() => navigate(-1)}
+          className="mb-6 inline-flex items-center text-blue-600 hover:text-blue-800 font-medium transition-colors"
+        >
+          <ArrowLeft className="w-5 h-5 mr-2" />
+          Back
+        </button>
 
-      <div className="bg-white rounded-xl shadow-lg overflow-hidden">
-        <div className="relative h-64 sm:h-80 md:h-96 lg:h-[500px]">
+        {/* Hero Image */}
+        <div className="relative rounded-3xl overflow-hidden shadow-2xl mb-8">
           <img
-            src={card.imageUrl}
+            src={card.imageUrl || fallbackImage}
             alt={card.title}
-            className="w-full h-full object-cover"
+            className="w-full h-80 sm:h-96 lg:h-[560px] object-cover"
             onError={(e) => {
-              const target = e.target as HTMLImageElement;
-              target.src = 'https://images.pexels.com/photos/3657154/pexels-photo-3657154.jpeg?auto=compress&cs=tinysrgb&w=1260&h=750&dpr=2';
+              (e.target as HTMLImageElement).src = fallbackImage;
             }}
           />
-          <div className="absolute inset-0 bg-gradient-to-t from-black/50 to-transparent"></div>
-          <div className="absolute bottom-4 sm:bottom-6 left-4 sm:left-6 text-white">
-            <h1 className="text-2xl sm:text-3xl md:text-4xl lg:text-5xl font-bold mb-2">{card.title}</h1>
-            <div className="flex flex-wrap gap-2 sm:gap-3">
-              <div className="inline-block bg-white/20 backdrop-blur-sm px-3 sm:px-4 py-1 sm:py-2 rounded-full">
-                <span className="text-sm sm:text-lg font-medium">{card.type}</span>
-              </div>
-              {card.pricePerHour > 0 && (
-                <div className="inline-flex items-center bg-white/20 backdrop-blur-sm px-3 sm:px-4 py-1 sm:py-2 rounded-full">
-                  <span className="text-sm sm:text-lg font-medium">₹{card.pricePerHour}/hour</span>
-                </div>
-              )}
-              {(card.openingTime || card.closingTime) && (
-                <div className="inline-flex items-center bg-white/20 backdrop-blur-sm px-3 sm:px-4 py-1 sm:py-2 rounded-full">
-                  <Clock className="w-4 h-4 sm:w-5 sm:h-5 mr-2" />
-                  <span className="text-sm sm:text-lg font-medium">
-                    {card.openingTime && card.closingTime 
-                      ? `${card.openingTime} - ${card.closingTime}`
-                      : card.openingTime || card.closingTime
-                    }
-                  </span>
-                </div>
+          <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/30 to-transparent" />
+          <div className="absolute bottom-8 left-6 right-6 text-white">
+            <h1 className="text-4xl sm:text-5xl lg:text-6xl font-bold mb-4 drop-shadow-2xl">{card.title}</h1>
+            <div className="flex flex-wrap gap-4">
+              <span className="bg-white/20 backdrop-blur px-5 py-3 rounded-full font-semibold">
+                {card.type}
+              </span>
+              <span className="bg-green-600/90 backdrop-blur px-5 py-3 rounded-full font-bold text-lg">
+                ₹{card.pricePerHour}/hour
+              </span>
+              {(opening || closing) && (
+                <span className="bg-white/20 backdrop-blur px-5 py-3 rounded-full flex items-center gap-2">
+                  <Clock className="w-5 h-5" />
+                  {opening} – {closing}
+                </span>
               )}
             </div>
           </div>
         </div>
 
-        <div className="p-4 sm:p-6 lg:p-8">
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 lg:gap-8">
-            <div className="lg:col-span-2 space-y-6">
-              {/* Description */}
-              {card.description && (
-                <div>
-                  <h2 className="text-xl sm:text-2xl font-semibold mb-4 text-gray-900">About This Venue</h2>
-                  <div className="bg-blue-50 rounded-lg p-4 sm:p-6">
-                    <p className="text-gray-700 leading-relaxed text-sm sm:text-base">{card.description}</p>
-                  </div>
-                </div>
-              )}
+        <div className="grid lg:grid-cols-3 gap-8">
+          {/* Main Content */}
+          <div className="lg:col-span-2 space-y-8">
+            {/* Description */}
+            {card.description && (
+              <section className="bg-white rounded-2xl shadow-lg p-8">
+                <h2 className="text-2xl font-bold mb-4">About This Venue</h2>
+                <p className="text-gray-700 leading-relaxed text-lg whitespace-pre-wrap">
+                  {card.description}
+                </p>
+              </section>
+            )}
 
-              {/* Location Map */}
-              {card.location && (
-                <div>
-                  <h2 className="text-xl sm:text-2xl font-semibold mb-4 text-gray-900">Location</h2>
-                  <div className="bg-gray-50 rounded-lg p-4 sm:p-6">
-                    <div className="flex items-center mb-4">
-                      <MapPin className="w-5 h-5 text-gray-600 mr-2 flex-shrink-0" />
-                      <span className="text-gray-700 font-medium text-sm sm:text-base">{card.location}</span>
-                    </div>
-                    <div className="rounded-lg overflow-hidden border border-gray-200">
-                      <iframe
-                        src={getGoogleMapsEmbedUrl(card.location)}
-                        width="100%"
-                        height="250"
-                        style={{ border: 0 }}
-                        allowFullScreen
-                        loading="lazy"
-                        referrerPolicy="no-referrer-when-downgrade"
-                        title={`Map showing location of ${card.title}`}
-                        className="sm:h-[300px]"
-                      ></iframe>
-                    </div>
-                  </div>
+            {/* Location Map - No API Key Needed */}
+            <section>
+              <h2 className="text-2xl font-bold mb-4">Location</h2>
+              <div className="bg-white rounded-2xl shadow-lg overflow-hidden">
+                <div className="p-5 bg-gradient-to-r from-blue-50 to-indigo-50 flex items-center gap-3">
+                  <MapPin className="w-7 h-7 text-blue-600" />
+                  <p className="text-lg font-semibold text-gray-800">{card.location}</p>
                 </div>
-              )}
+                <div className="h-96 w-full">
+                  <iframe
+                    src={googleMapsUrl}
+                    width="100%"
+                    height="100%"
+                    style={{ border: 0 }}
+                    allowFullScreen
+                    loading="lazy"
+                    referrerPolicy="no-referrer-when-downgrade"
+                    title="Venue location on Google Maps"
+                    className="w-full h-full"
+                  ></iframe>
+                </div>
+                <div className="p-4 bg-gray-50 border-t">
+                  <a
+                    href={`https://maps.google.com/maps?q=${encodeURIComponent(card.location)}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-blue-600 hover:underline font-medium flex items-center gap-2"
+                  >
+                    Open in Google Maps
+                  </a>
+                </div>
+              </div>
+            </section>
+          </div>
+
+          {/* Sidebar */}
+          <aside className="space-y-6">
+            <div className="bg-white rounded-2xl shadow-xl border border-gray-100 p-6 sticky top-24">
+              <h3 className="text-2xl font-bold mb-6">Book This Venue</h3>
+              <div className="text-4xl font-bold text-green-600 mb-2">
+                ₹{card.pricePerHour}
+                <span className="text-lg font-normal text-gray-500"> / hour</span>
+              </div>
+
+              <button
+                onClick={handleBookNow}
+                className="w-full bg-gradient-to-r from-blue-600 to-green-600 text-white font-bold py-5 rounded-2xl hover:shadow-2xl transition-all duration-300 text-xl mt-6 flex items-center justify-center gap-3"
+              >
+                <CalendarDays className="w-7 h-7" />
+                {user ? 'Book Now' : 'Login to Book'}
+              </button>
+
+              <button
+                onClick={() => navigate('/')}
+                className="w-full mt-4 py-4 border border-gray-300 rounded-xl hover:bg-gray-50 font-medium transition"
+              >
+                Browse More Venues
+              </button>
             </div>
 
-            {/* Sidebar */}
-            <div className="space-y-6">
-              {/* Booking Card */}
-              <div className="bg-white rounded-xl shadow-lg p-4 sm:p-6 border border-gray-200 sticky top-4">
-                <h3 className="text-lg sm:text-xl font-semibold text-gray-900 mb-4">Book This Venue</h3>
-                
-                {card.pricePerHour > 0 && (
-                  <div className="mb-4">
-                    <div className="text-2xl sm:text-3xl font-bold text-green-600">
-                      ₹{card.pricePerHour}
-                      <span className="text-base sm:text-lg font-normal text-gray-500">/hour</span>
+            {/* Info Cards */}
+            <div className="bg-white rounded-2xl shadow-lg p-6 border border-gray-100">
+              <h3 className="text-xl font-bold mb-5">Venue Details</h3>
+              <div className="space-y-5">
+                <div className="flex items-center gap-4">
+                  <div className="w-12 h-12 bg-blue-100 rounded-xl flex items-center justify-center">
+                    <CalendarDays className="w-6 h-6 text-blue-600" />
+                  </div>
+                  <div>
+                    <p className="font-medium">Sport</p>
+                    <p className="text-gray-600">{card.type}</p>
+                  </div>
+                </div>
+                {(opening || closing) && (
+                  <div className="flex items-center gap-4">
+                    <div className="w-12 h-12 bg-orange-100 rounded-xl flex items-center justify-center">
+                      <Clock className="w-6 h-6 text-orange-600" />
+                    </div>
+                    <div>
+                      <p className="font-medium">Hours</p>
+                      <p className="text-gray-600">{opening} – {closing}</p>
                     </div>
                   </div>
                 )}
-
-                <button
-                  onClick={handleBookNow}
-                  className="w-full bg-green-600 text-white py-3 px-6 rounded-lg hover:bg-green-700 transition-colors duration-200 font-medium flex items-center justify-center mb-4 text-sm sm:text-base"
-                >
-                  <CalendarCheck className="w-5 h-5 mr-2" />
-                  {user ? 'Book Now' : 'Book Now (Login Required)'}
-                </button>
-
-                <button
-                  onClick={() => navigate('/')}
-                  className="w-full bg-gray-100 text-gray-700 py-3 px-6 rounded-lg hover:bg-gray-200 transition-colors duration-200 font-medium text-sm sm:text-base"
-                >
-                  Back to Home
-                </button>
-              </div>
-
-              {/* Venue Details */}
-              <div className="bg-white rounded-xl shadow-lg p-4 sm:p-6 border border-gray-200">
-                <h3 className="text-lg sm:text-xl font-semibold text-gray-900 mb-4">Venue Details</h3>
-                
-                <div className="space-y-4">
-                  <div className="flex items-center">
-                    <div className="w-10 h-10 sm:w-12 sm:h-12 bg-blue-100 rounded-full flex items-center justify-center mr-3 sm:mr-4 flex-shrink-0">
-                      <Calendar className="w-5 h-5 sm:w-6 sm:h-6 text-blue-600" />
-                    </div>
-                    <div>
-                      <h4 className="font-semibold text-gray-900 text-sm sm:text-base">Sport Type</h4>
-                      <p className="text-gray-600 text-sm">{card.type}</p>
-                    </div>
+                <div className="flex items-center gap-4">
+                  <div className="w-12 h-12 bg-green-100 rounded-xl flex items-center justify-center">
+                    <MapPin className="w-6 h-6 text-green-600" />
                   </div>
-                  
-                  {(card.openingTime || card.closingTime) && (
-                    <div className="flex items-center">
-                      <div className="w-10 h-10 sm:w-12 sm:h-12 bg-orange-100 rounded-full flex items-center justify-center mr-3 sm:mr-4 flex-shrink-0">
-                        <Clock className="w-5 h-5 sm:w-6 sm:h-6 text-orange-600" />
-                      </div>
-                      <div>
-                        <h4 className="font-semibold text-gray-900 text-sm sm:text-base">Operating Hours</h4>
-                        <p className="text-gray-600 text-sm">
-                          {card.openingTime && card.closingTime 
-                            ? `${card.openingTime} - ${card.closingTime}`
-                            : card.openingTime || card.closingTime
-                          }
-                        </p>
-                      </div>
-                    </div>
-                  )}
-
-                  {card.location && (
-                    <div className="flex items-center">
-                      <div className="w-10 h-10 sm:w-12 sm:h-12 bg-green-100 rounded-full flex items-center justify-center mr-3 sm:mr-4 flex-shrink-0">
-                        <MapPin className="w-5 h-5 sm:w-6 sm:h-6 text-green-600" />
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <h4 className="font-semibold text-gray-900 text-sm sm:text-base">Location</h4>
-                        <p className="text-gray-600 text-sm break-words">{card.location}</p>
-                      </div>
-                    </div>
-                  )}
+                  <div>
+                    <p className="font-medium">Location</p>
+                    <p className="text-gray-600 text-sm">{card.location}</p>
+                  </div>
                 </div>
               </div>
             </div>
-          </div>
+          </aside>
         </div>
       </div>
 
-      {/* Login Prompt Modal */}
-      {showLoginPrompt && <LoginPromptModal />}
+      {/* Login Prompt */}
+      {showLoginPrompt && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4" onClick={() => setShowLoginPrompt(false)}>
+          <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-8" onClick={(e) => e.stopPropagation()}>
+            <div className="text-center">
+              <div className="w-20 h-20 bg-blue-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                <CalendarDays className="w-10 h-10 text-blue-600" />
+              </div>
+              <h2 className="text-2xl font-bold mb-3">Sign In Required</h2>
+              <p className="text-gray-600 mb-6">Please log in to book this venue</p>
+              <button
+                onClick={() => navigate('/login', { state: { from: location } })}
+                className="w-full bg-blue-600 text-white py- py-4 rounded-xl hover:bg-blue-700 font-bold"
+              >
+                Sign In Now
+              </button>
+              <button
+                onClick={() => setShowLoginPrompt(false)}
+                className="w-full mt-3 py-4 border border-gray-300 rounded-xl hover:bg-gray-50"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

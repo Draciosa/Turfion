@@ -10,13 +10,15 @@ interface HeroData {
   buttonLink: string;
 }
 
+const fallbackImage = 'https://images.pexels.com/photos/274506/pexels-photo-274506.jpeg?auto=compress&cs=tinysrgb&w=1920&h=1080&dpr=2';
+
 const HeroSection: React.FC = () => {
   const [heroData, setHeroData] = useState<HeroData>({
     title: 'Welcome to TURFION',
-    subtitle: 'Discover and book amazing sports venues and activities',
-    backgroundImage: 'https://images.pexels.com/photos/3657154/pexels-photo-3657154.jpeg?auto=compress&cs=tinysrgb&w=1260&h=750&dpr=2',
-    buttonText: 'Explore Now',
-    buttonLink: '#cards'
+    subtitle: 'Book premium sports venues and connect with players in your city',
+    backgroundImage: fallbackImage,
+    buttonText: 'Explore Venues',
+    buttonLink: '#cards',
   });
   const [loading, setLoading] = useState(true);
 
@@ -25,11 +27,19 @@ const HeroSection: React.FC = () => {
       try {
         const heroDoc = await getDoc(doc(db, 'settings', 'hero'));
         if (heroDoc.exists()) {
-          const data = heroDoc.data() as HeroData;
-          setHeroData(data);
+          const data = heroDoc.data();
+          setHeroData({
+            title: data.title || 'Welcome to TURFION',
+            subtitle: data.subtitle || 'Book premium sports venues and connect with players',
+            backgroundImage: data.backgroundImage || fallbackImage,
+            buttonText: data.buttonText || 'Explore Venues',
+            buttonLink: data.buttonLink || '#cards',
+          });
         }
+        // If document doesn't exist, silently use defaults
       } catch (error) {
-        console.error('Error fetching hero data:', error);
+        console.warn('Hero data not available (using defaults):', error);
+        // Graceful fallback — no crash
       } finally {
         setLoading(false);
       }
@@ -40,53 +50,56 @@ const HeroSection: React.FC = () => {
 
   const handleButtonClick = () => {
     if (heroData.buttonLink.startsWith('#')) {
-      const element = document.querySelector(heroData.buttonLink);
-      if (element) {
-        element.scrollIntoView({ behavior: 'smooth' });
+      const target = document.querySelector(heroData.buttonLink);
+      if (target) {
+        target.scrollIntoView({ behavior: 'smooth', block: 'start' });
       }
     } else {
-      window.open(heroData.buttonLink, '_blank');
+      window.open(heroData.buttonLink, '_blank', 'noopener,noreferrer');
     }
   };
 
   if (loading) {
     return (
-      <div className="relative h-64 sm:h-80 md:h-96 bg-gray-200 animate-pulse rounded-xl mb-12">
-        <div className="absolute inset-0 flex items-center justify-center">
-          <div className="text-gray-400">Loading...</div>
+      <section className="relative h-96 md:h-screen max-h-[800px] rounded-3xl overflow-hidden mb-20 shadow-2xl bg-gradient-to-br from-blue-600 via-purple-600 to-indigo-700">
+        <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/50 to-transparent animate-pulse" />
+        <div className="relative h-full flex items-center justify-center text-center px-8">
+          <div className="max-w-6xl mx-auto">
+            <div className="h-20 bg-white/20 rounded-3xl w-11/12 mx-auto mb-8" />
+            <div className="h-12 bg-white/10 rounded-2xl w-10/12 mx-auto mb-16" />
+            <div className="h-16 bg-white/30 rounded-full w-80 mx-auto" />
+          </div>
         </div>
-      </div>
+      </section>
     );
   }
 
   return (
-    <div className="relative h-64 sm:h-80 md:h-96 rounded-xl overflow-hidden mb-12 shadow-2xl">
-      {/* Background Image */}
-      <div 
-        className="absolute inset-0 bg-cover bg-center bg-no-repeat"
-        style={{ backgroundImage: `url(${heroData.backgroundImage})` }}
+   <section className="relative h-96 rounded-3xl overflow-hidden mb-16 shadow-2xl">
+  <div
+    className="absolute inset-0 bg-cover bg-center bg-no-repeat"
+    style={{ backgroundImage: `url(${heroData.backgroundImage})` }}
+  >
+    <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/40 to-transparent" />
+  </div>
+
+  <div className="relative h-full flex items-center justify-center text-center px-8">
+    <div className="max-w-4xl mx-auto">
+      <h1 className="text-5xl md:text-6xl font-extrabold text-white leading-tight drop-shadow-2xl">
+        {heroData.title}
+      </h1>
+      <p className="mt-6 text-xl md:text-2xl text-gray-100 font-light max-w-2xl mx-auto drop-shadow-lg">
+        {heroData.subtitle}
+      </p>
+      <button
+        onClick={handleButtonClick}
+        className="mt-10 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white font-bold py-4 px-10 rounded-full text-xl transition-all duration-300 transform hover:scale-105 shadow-2xl"
       >
-        <div className="absolute inset-0 bg-black bg-opacity-50"></div>
-      </div>
-      
-      {/* Content */}
-      <div className="relative h-full flex items-center justify-center text-center text-white px-4">
-        <div className="max-w-4xl">
-          <h1 className="text-2xl sm:text-4xl md:text-6xl font-bold mb-4 leading-tight">
-            {heroData.title}
-          </h1>
-          <p className="text-sm sm:text-xl md:text-2xl mb-6 sm:mb-8 text-gray-200 leading-relaxed px-4">
-            {heroData.subtitle}
-          </p>
-          <button
-            onClick={handleButtonClick}
-            className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-6 sm:py-4 sm:px-8 rounded-lg text-sm sm:text-lg transition-all duration-300 transform hover:scale-105 shadow-lg"
-          >
-            {heroData.buttonText}
-          </button>
-        </div>
-      </div>
+        {heroData.buttonText} →
+      </button>
     </div>
+  </div>
+</section>
   );
 };
 

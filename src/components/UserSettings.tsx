@@ -1,8 +1,26 @@
 import React, { useState, useEffect } from 'react';
 import { db } from '../lib/firebase';
-import { collection, query, onSnapshot, doc, updateDoc, serverTimestamp, addDoc } from 'firebase/firestore';
+import {
+  collection,
+  query,
+  onSnapshot,
+  doc,
+  updateDoc,
+  serverTimestamp,
+  addDoc,
+} from 'firebase/firestore';
 import { useAuth } from '../contexts/AuthContext';
-import { Users, Shield, ShieldOff, AlertTriangle, Search, UserX } from 'lucide-react';
+import {
+  Users,
+  Shield,
+  ShieldOff,
+  AlertTriangle,
+  Search,
+  UserCog,
+  CheckCircle,
+  X,
+  Calendar, // ← Fixed: Was missing
+} from 'lucide-react';
 
 interface User {
   id: string;
@@ -12,7 +30,7 @@ interface User {
   mfaEnabled?: boolean;
   mfaSecret?: string;
   createdAt: any;
-  updatedAt: any;
+  updatedAt?: any;
   phoneNumber?: string;
 }
 
@@ -24,109 +42,123 @@ const UserSettings: React.FC = () => {
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
+  const [roleModal, setRoleModal] = useState<User | null>(null);
+  const [mfaModal, setMfaModal] = useState<User | null>(null);
+  const [selectedRole, setSelectedRole] = useState('');
 
   useEffect(() => {
     if (!hasRole('admin')) return;
 
     const q = query(collection(db, 'users'));
 
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const usersData = snapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      })) as User[];
+    const unsubscribe = onSnapshot(
+      q,
+      (snapshot) => {
+        const usersData: User[] = snapshot.docs.map((doc) => ({
+          id: doc.id,
+          ...doc.data(),
+        } as User));
 
-      // Sort by creation date (most recent first)
-      usersData.sort((a, b) => {
-        const dateA = a.createdAt?.toDate?.() || new Date(0);
-        const dateB = b.createdAt?.toDate?.() || new Date(0);
-        return dateB.getTime() - dateA.getTime();
-      });
+        usersData.sort((a, b) => {
+          const dateA = a.createdAt?.toDate?.() || new Date(0);
+          const dateB = b.createdAt?.toDate?.() || new Date(0);
+          return dateB.getTime() - dateA.getTime();
+        });
 
-      setUsers(usersData);
-      setLoading(false);
-    }, (err) => {
-      console.error('Error fetching users:', err);
-      setError('Failed to load users');
-      setLoading(false);
-    });
+        setUsers(usersData);
+        setLoading(false);
+      },
+      (err) => {
+        console.error('Error fetching users:', err);
+        setError('Failed to load users');
+        setLoading(false);
+      }
+    );
 
     return unsubscribe;
   }, [hasRole]);
 
-  const handleResetMfa = async (userId: string, userEmail: string) => {
-    if (!confirm(`Are you sure you want to reset MFA for ${userEmail}? This will disable their MFA and remove their secret key.`)) {
-      return;
+  // Auto-clear messages
+  useEffect(() => {
+    if (success || error) {
+      const timer = setTimeout(() => {
+        setSuccess('');
+        setError('');
+      }, 6000);
+      return () => clearTimeout(timer);
     }
+  }, [success, error]);
 
-    setProcessing(userId);
+  const filteredUsers = users.filter(
+    (user) =>
+      user.email.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      (user.displayName || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+      user.role.toLowerCase().includes(searchTerm.toLowerCase())
+  );
+
+  const handleChangeRole = async () => {
+    if (!roleModal || !selectedRole) return;
+
+    setProcessing(roleModal.id);
     setError('');
     setSuccess('');
 
     try {
-      await updateDoc(doc(db, 'users', userId), {
-        mfaEnabled: false,
-        mfaSecret: '',
-        updatedAt: serverTimestamp()
+      await updateDoc(doc(db, 'users', roleModal.id), {
+        role: selectedRole,
+        updatedAt: serverTimestamp(),
       });
 
-      // Create notification for the user
       await addDoc(collection(db, 'notifications'), {
-        userId: userId,
-        type: 'mfa_reset',
-        title: 'MFA Reset by Administrator',
-        message: 'Your Multi-Factor Authentication has been reset by an administrator. You can set up MFA again from your profile settings if needed.',
+        userId: roleModal.id,
+        type: 'role_changed',
+        title: 'Account Role Updated',
+        message: `Your account role has been changed to ${selectedRole} by an administrator.`,
         read: false,
-        createdAt: serverTimestamp()
+        createdAt: serverTimestamp(),
       });
 
-      setSuccess(`MFA has been reset for ${userEmail}`);
-    } catch (error) {
-      console.error('Error resetting MFA:', error);
-      setError('Failed to reset MFA. Please try again.');
+      setSuccess(`Role changed to ${selectedRole} for ${roleModal.email}`);
+    } catch (err) {
+      console.error('Error changing role:', err);
+      setError('Failed to change role');
     } finally {
       setProcessing(null);
+      setRoleModal(null);
+      setSelectedRole('');
     }
   };
 
-  const handleChangeRole = async (userId: string, userEmail: string, currentRole: string) => {
-    const roles = ['user', 'host', 'admin'];
-    const newRole = prompt(`Change role for ${userEmail}. Current role: ${currentRole}\n\nEnter new role (user/host/admin):`, currentRole);
-    
-    if (!newRole || !roles.includes(newRole.toLowerCase()) || newRole.toLowerCase() === currentRole) {
-      return;
-    }
+  const handleResetMfa = async () => {
+    if (!mfaModal) return;
 
-    if (!confirm(`Are you sure you want to change ${userEmail}'s role from ${currentRole} to ${newRole.toLowerCase()}?`)) {
-      return;
-    }
-
-    setProcessing(userId);
+    setProcessing(mfaModal.id);
     setError('');
     setSuccess('');
 
     try {
-      await updateDoc(doc(db, 'users', userId), {
-        role: newRole.toLowerCase(),
-        updatedAt: serverTimestamp()
+      await updateDoc(doc(db, 'users', mfaModal.id), {
+        mfaEnabled: false,
+        mfaSecret: '',
+        updatedAt: serverTimestamp(),
       });
 
-      // Create notification for the user
       await addDoc(collection(db, 'notifications'), {
-        userId: userId,
-        type: 'role_changed',
-        title: 'Account Role Updated',
-        message: `Your account role has been changed from ${currentRole} to ${newRole.toLowerCase()} by an administrator.`,
+        userId: mfaModal.id,
+        type: 'mfa_reset',
+        title: 'MFA Reset by Administrator',
+        message: 'Your Multi-Factor Authentication has been reset by an administrator.',
         read: false,
-        createdAt: serverTimestamp()
+        createdAt: serverTimestamp(),
       });
 
-      setSuccess(`Role changed for ${userEmail} from ${currentRole} to ${newRole.toLowerCase()}`);
-    } catch (error) {
-      console.error('Error changing role:', error);
-      setError('Failed to change role. Please try again.');
+      setSuccess(`MFA reset for ${mfaModal.email}`);
+    } catch (err) {
+      console.error('Error resetting MFA:', err);
+      setError('Failed to reset MFA');
     } finally {
       setProcessing(null);
+      setMfaModal(null);
     }
   };
 
@@ -136,195 +168,302 @@ const UserSettings: React.FC = () => {
       year: 'numeric',
       month: 'short',
       day: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit'
     });
   };
 
-  const getRoleColor = (role: string) => {
-    switch (role) {
-      case 'admin': return 'bg-red-100 text-red-800';
-      case 'host': return 'bg-purple-100 text-purple-800';
-      default: return 'bg-blue-100 text-blue-800';
-    }
+  const getRoleBadge = (role: string) => {
+    const styles: Record<string, string> = {
+      admin: 'bg-gradient-to-r from-red-500 to-pink-600 text-white shadow-lg',
+      host: 'bg-gradient-to-r from-purple-500 to-indigo-600 text-white shadow-lg',
+      user: 'bg-gradient-to-r from-blue-500 to-cyan-600 text-white shadow-lg',
+    };
+    return (
+      <span className={`px-6 py-3 rounded-full font-bold text-lg ${styles[role] || 'bg-gray-500 text-white'}`}>
+        {role.charAt(0).toUpperCase() + role.slice(1)}
+      </span>
+    );
   };
-
-  const filteredUsers = users.filter(user =>
-    user.email.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    user.displayName?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    user.role.toLowerCase().includes(searchTerm.toLowerCase())
-  );
 
   if (!hasRole('admin')) {
     return (
-      <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded-lg">
-        Only administrators can access user settings.
+      <div className="min-h-screen bg-gradient-to-br from-red-50 to-pink-50 flex items-center justify-center p-6">
+        <div className="max-w-md w-full bg-white rounded-3xl shadow-2xl p-12 text-center">
+          <Shield className="w-20 h-20 text-red-600 mx-auto mb-8" />
+          <h2 className="text-4xl font-extrabold text-gray-900 mb-4">Access Denied</h2>
+          <p className="text-xl text-gray-600">Only administrators can manage user settings.</p>
+        </div>
       </div>
     );
   }
 
   if (loading) {
     return (
-      <div className="flex justify-center py-8">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="animate-spin rounded-full h-20 w-20 border-b-4 border-blue-600" />
       </div>
     );
   }
 
   return (
-    <div className="space-y-6">
-      <div className="bg-white rounded-xl shadow-lg p-6">
-        <div className="flex items-center justify-between mb-6">
-          <h3 className="text-xl font-semibold flex items-center">
-            <Users className="w-6 h-6 mr-2 text-blue-600" />
-            User Settings ({users.length} users)
-          </h3>
+    <div className="min-h-screen bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50 py-12 px-6">
+      <div className="max-w-7xl mx-auto">
+        {/* Header */}
+        <div className="text-center mb-12">
+          <h1 className="text-6xl font-extrabold text-gray-900 mb-4">User Management</h1>
+          <p className="text-2xl text-gray-600">Admin control panel for user roles and security</p>
         </div>
 
-        {error && (
-          <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded-lg mb-4">
-            {error}
+        {/* Messages */}
+        {success && (
+          <div className="mb-10 p-8 bg-green-50 border-2 border-green-200 rounded-3xl flex items-start gap-6 animate-in fade-in slide-in-from-top-4">
+            <CheckCircle className="w-10 h-10 text-green-600 flex-shrink-0 mt-1" />
+            <div>
+              <p className="text-2xl font-bold text-green-800">{success}</p>
+            </div>
           </div>
         )}
 
-        {success && (
-          <div className="bg-green-100 border border-green-400 text-green-700 px-4 py-3 rounded-lg mb-4">
-            {success}
+        {error && (
+          <div className="mb-10 p-8 bg-red-50 border-2 border-red-200 rounded-3xl flex items-start gap-6">
+            <AlertTriangle className="w-10 h-10 text-red-600 flex-shrink-0 mt-1" />
+            <p className="text-2xl font-bold text-red-800">{error}</p>
           </div>
         )}
 
         {/* Search */}
-        <div className="mb-6">
-          <div className="relative">
-            <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-              <Search className="h-5 w-5 text-gray-400" />
+        <div className="mb-12">
+          <div className="relative max-w-2xl mx-auto">
+            <div className="absolute inset-y-0 left-0 pl-8 flex items-center pointer-events-none">
+              <Search className="w-8 h-8 text-gray-400" />
             </div>
             <input
               type="text"
-              placeholder="Search users by email, name, or role..."
+              placeholder="Search by email, name, or role..."
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
-              className="block w-full pl-10 pr-3 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              className="w-full pl-20 pr-8 py-6 text-xl border-2 border-gray-200 rounded-3xl focus:border-blue-500 focus:outline-none transition-all duration-300 placeholder-gray-400"
             />
           </div>
         </div>
 
-        {filteredUsers.length === 0 ? (
-          <div className="text-center py-12 bg-gray-50 rounded-lg">
-            <Users className="w-12 h-12 text-gray-300 mx-auto mb-4" />
-            <p className="text-gray-500 text-lg">
-              {searchTerm ? 'No users match your search' : 'No users found'}
-            </p>
-          </div>
-        ) : (
-          <div className="space-y-4">
-            {filteredUsers.map((user) => (
-              <div key={user.id} className="border border-gray-200 rounded-lg p-4 hover:shadow-md transition-shadow duration-200">
-                <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between space-y-4 lg:space-y-0">
-                  <div className="flex-1">
-                    <div className="flex flex-col sm:flex-row sm:items-center sm:space-x-4 space-y-2 sm:space-y-0">
-                      <div className="flex items-center space-x-3">
-                        <div className="w-10 h-10 bg-blue-100 rounded-full flex items-center justify-center">
-                          <Users className="w-5 h-5 text-blue-600" />
-                        </div>
-                        <div>
-                          <h4 className="font-semibold text-gray-900">
-                            {user.displayName || user.email}
-                          </h4>
-                          {user.displayName && (
-                            <p className="text-sm text-gray-600">{user.email}</p>
-                          )}
-                          {user.phoneNumber && (
-                            <p className="text-sm text-gray-500">📞 {user.phoneNumber}</p>
-                          )}
-                        </div>
-                      </div>
-                      
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span className={`px-3 py-1 rounded-full text-sm font-medium ${getRoleColor(user.role)}`}>
-                          {user.role.charAt(0).toUpperCase() + user.role.slice(1)}
-                        </span>
-                        
-                        <span className={`px-3 py-1 rounded-full text-sm font-medium flex items-center ${
-                          user.mfaEnabled 
-                            ? 'bg-green-100 text-green-800' 
-                            : 'bg-gray-100 text-gray-800'
-                        }`}>
-                          {user.mfaEnabled ? (
-                            <>
-                              <Shield className="w-3 h-3 mr-1" />
-                              MFA Enabled
-                            </>
-                          ) : (
-                            <>
-                              <ShieldOff className="w-3 h-3 mr-1" />
-                              MFA Disabled
-                            </>
-                          )}
-                        </span>
-                      </div>
+        {/* Users Grid */}
+        <div className="grid gap-8">
+          {filteredUsers.length === 0 ? (
+            <div className="text-center py-24 bg-white rounded-3xl shadow-2xl">
+              <Users className="w-24 h-24 text-gray-300 mx-auto mb-8" />
+              <h3 className="text-3xl font-bold text-gray-700 mb-4">
+                {searchTerm ? 'No users match your search' : 'No users found'}
+              </h3>
+            </div>
+          ) : (
+            filteredUsers.map((user) => (
+              <div
+                key={user.id}
+                className="bg-white rounded-3xl shadow-2xl p-10 hover:shadow-3xl transition-all duration-300"
+              >
+                <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-8">
+                  {/* User Info */}
+                  <div className="flex items-start gap-8">
+                    <div className="w-24 h-24 bg-gradient-to-br from-blue-500 to-purple-600 rounded-full flex items-center justify-center text-white text-3xl font-bold shadow-xl">
+                      {user.displayName?.charAt(0).toUpperCase() || user.email.charAt(0).toUpperCase()}
                     </div>
-                    
-                    <div className="mt-2 text-xs text-gray-500 space-y-1">
-                      <p>User ID: {user.id}</p>
-                      <p>Created: {formatDate(user.createdAt)}</p>
-                      {user.updatedAt && (
-                        <p>Updated: {formatDate(user.updatedAt)}</p>
+                    <div>
+                      <h3 className="text-3xl font-extrabold text-gray-900">
+                        {user.displayName || 'No Name Set'}
+                      </h3>
+                      <p className="text-xl text-gray-600 mt-2">{user.email}</p>
+                      {user.phoneNumber && (
+                        <p className="text-lg text-gray-500 mt-3">📞 {user.phoneNumber}</p>
                       )}
+                      <div className="flex items-center gap-6 mt-6 text-lg">
+                        <div className="flex items-center gap-3">
+                          <Calendar className="w-6 h-6 text-gray-500" />
+                          <span className="text-gray-600">Joined {formatDate(user.createdAt)}</span>
+                        </div>
+                      </div>
                     </div>
                   </div>
-                  
-                  <div className="flex flex-col sm:flex-row items-stretch sm:items-center space-y-2 sm:space-y-0 sm:space-x-2">
-                    <button
-                      onClick={() => handleChangeRole(user.id, user.email, user.role)}
-                      disabled={processing === user.id}
-                      className="flex items-center justify-center space-x-2 px-3 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors duration-200 disabled:opacity-50 disabled:cursor-not-allowed text-sm"
-                    >
-                      <UserX className="w-4 h-4" />
-                      <span>Change Role</span>
-                    </button>
-                    
-                    {user.mfaEnabled && (
-                      <button
-                        onClick={() => handleResetMfa(user.id, user.email)}
-                        disabled={processing === user.id}
-                        className="flex items-center justify-center space-x-2 px-3 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors duration-200 disabled:opacity-50 disabled:cursor-not-allowed text-sm"
-                      >
-                        {processing === user.id ? (
+
+                  {/* Status & Actions */}
+                  <div className="flex flex-col gap-6">
+                    {/* Role Badge */}
+                    <div className="self-start">
+                      {getRoleBadge(user.role)}
+                    </div>
+
+                    {/* MFA Status */}
+                    <div className="self-start">
+                      <span className={`inline-flex items-center gap-3 px-8 py-4 rounded-full text-xl font-bold ${user.mfaEnabled ? 'bg-green-100 text-green-800 shadow-lg' : 'bg-gray-100 text-gray-800'}`}>
+                        {user.mfaEnabled ? (
                           <>
-                            <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
-                            <span>Resetting...</span>
+                            <Shield className="w-8 h-8" />
+                            MFA Enabled
                           </>
                         ) : (
                           <>
-                            <ShieldOff className="w-4 h-4" />
-                            <span>Reset MFA</span>
+                            <ShieldOff className="w-8 h-8" />
+                            MFA Disabled
                           </>
                         )}
+                      </span>
+                    </div>
+
+                    {/* Actions */}
+                    <div className="flex gap-4">
+                      <button
+                        onClick={() => {
+                          setRoleModal(user);
+                          setSelectedRole(user.role);
+                        }}
+                        disabled={processing === user.id}
+                        className="flex items-center gap-4 px-8 py-5 bg-gradient-to-r from-blue-600 to-indigo-600 text-white font-bold rounded-2xl hover:from-blue-700 hover:to-indigo-700 disabled:opacity-60 transition-all duration-300 shadow-xl hover:shadow-2xl text-xl"
+                      >
+                        <UserCog className="w-8 h-8" />
+                        Change Role
                       </button>
-                    )}
+
+                      {user.mfaEnabled && (
+                        <button
+                          onClick={() => setMfaModal(user)}
+                          disabled={processing === user.id}
+                          className="flex items-center gap-4 px-8 py-5 bg-gradient-to-r from-red-600 to-orange-600 text-white font-bold rounded-2xl hover:from-red-700 hover:to-orange-700 disabled:opacity-60 transition-all duration-300 shadow-xl hover:shadow-2xl text-xl"
+                        >
+                          <ShieldOff className="w-8 h-8" />
+                          Reset MFA
+                        </button>
+                      )}
+                    </div>
                   </div>
                 </div>
               </div>
-            ))}
-          </div>
-        )}
+            ))
+          )}
+        </div>
 
-        {/* Info Section */}
-        <div className="mt-6 bg-yellow-50 border border-yellow-200 rounded-lg p-4">
-          <div className="flex items-start">
-            <AlertTriangle className="w-5 h-5 text-yellow-600 mr-3 mt-0.5" />
+        {/* Warning Banner */}
+        <div className="mt-16 bg-gradient-to-r from-yellow-50 to-orange-50 border-4 border-yellow-300 rounded-3xl p-12">
+          <div className="flex items-start gap-8">
+            <AlertTriangle className="w-14 h-14 text-yellow-600 flex-shrink-0 mt-2" />
             <div>
-              <h4 className="text-sm font-semibold text-yellow-800">Admin Actions</h4>
-              <ul className="text-sm text-yellow-700 mt-1 space-y-1">
-                <li>• Reset MFA: Disables MFA and removes secret key for the user</li>
-                <li>• Change Role: Modify user permissions (user/host/admin)</li>
-                <li>• Users will be notified of any changes made to their account</li>
-                <li>• All actions are logged and cannot be undone</li>
+              <h3 className="text-3xl font-extrabold text-yellow-900 mb-6">Admin Actions Are Permanent</h3>
+              <ul className="space-y-6 text-xl text-yellow-800">
+                <li className="flex items-start gap-4">
+                  <span className="text-3xl">•</span>
+                  <span>
+                    <strong>Change Role:</strong> Modifies user permissions (user → host → admin)
+                  </span>
+                </li>
+                <li className="flex items-start gap-4">
+                  <span className="text-3xl">•</span>
+                  <span>
+                    <strong>Reset MFA:</strong> Completely disables two-factor authentication
+                  </span>
+                </li>
+                <li className="flex items-start gap-4">
+                  <span className="text-3xl">•</span>
+                  <span>
+                    <strong>Notifications:</strong> Users are automatically informed of changes
+                  </span>
+                </li>
               </ul>
+              <p className="mt-8 text-2xl font-bold text-yellow-900">
+                Use these powers responsibly.
+              </p>
             </div>
           </div>
         </div>
+
+        {/* Role Change Modal */}
+        {roleModal && (
+          <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-6">
+            <div className="bg-white rounded-3xl shadow-2xl max-w-lg w-full p-10 animate-in zoom-in">
+              <div className="text-center mb-10">
+                <UserCog className="w-20 h-20 text-blue-600 mx-auto mb-6" />
+                <h2 className="text-4xl font-extrabold text-gray-900 mb-4">Change User Role</h2>
+                <div className="bg-gray-50 rounded-2xl p-8">
+                  <p className="text-2xl font-bold text-gray-900">{roleModal.displayName || roleModal.email}</p>
+                  <p className="text-xl text-gray-600">{roleModal.email}</p>
+                  <p className="text-lg text-gray-500 mt-4">
+                    Current role: <strong className="uppercase">{roleModal.role}</strong>
+                  </p>
+                </div>
+              </div>
+
+              <div className="space-y-6">
+                <label className="block text-xl font-bold text-gray-800">Select New Role</label>
+                <div className="grid grid-cols-3 gap-6">
+                  {['user', 'host', 'admin'].map((role) => (
+                    <button
+                      key={role}
+                      onClick={() => setSelectedRole(role)}
+                      className={`py-8 rounded-2xl font-bold text-2xl transition-all duration-300 ${
+                        selectedRole === role
+                          ? 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-2xl scale-110'
+                          : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                      }`}
+                    >
+                      {role.charAt(0).toUpperCase() + role.slice(1)}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="flex gap-6 mt-12">
+                <button
+                  onClick={handleChangeRole}
+                  disabled={processing === roleModal.id || !selectedRole || selectedRole === roleModal.role}
+                  className="flex-1 bg-gradient-to-r from-blue-600 to-indigo-600 text-white font-bold py-6 rounded-2xl hover:from-blue-700 hover:to-indigo-700 disabled:opacity-60 transition-all shadow-xl text-xl"
+                >
+                  {processing ? 'Updating...' : 'Change Role'}
+                </button>
+                <button
+                  onClick={() => {
+                    setRoleModal(null);
+                    setSelectedRole('');
+                  }}
+                  className="flex-1 py-6 border-4 border-gray-300 text-gray-700 rounded-2xl hover:bg-gray-50 font-bold text-xl transition-colors"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* MFA Reset Modal */}
+        {mfaModal && (
+          <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-6">
+            <div className="bg-white rounded-3xl shadow-2xl max-w-lg w-full p-10 animate-in zoom-in">
+              <div className="text-center mb-10">
+                <ShieldOff className="w-20 h-20 text-red-600 mx-auto mb-6" />
+                <h2 className="text-4xl font-extrabold text-gray-900 mb-4">Reset MFA?</h2>
+                <div className="bg-gray-50 rounded-2xl p-8">
+                  <p className="text-2xl font-bold text-gray-900">{mfaModal.displayName || mfaModal.email}</p>
+                  <p className="text-xl text-gray-600">{mfaModal.email}</p>
+                </div>
+                <p className="text-xl text-red-600 font-semibold mt-8">
+                  This will completely disable two-factor authentication
+                </p>
+              </div>
+
+              <div className="flex gap-6">
+                <button
+                  onClick={handleResetMfa}
+                  disabled={processing === mfaModal.id}
+                  className="flex-1 bg-gradient-to-r from-red-600 to-orange-600 text-white font-bold py-6 rounded-2xl hover:from-red-700 hover:to-orange-700 disabled:opacity-60 transition-all shadow-xl text-xl"
+                >
+                  {processing ? 'Resetting...' : 'Yes, Reset MFA'}
+                </button>
+                <button
+                  onClick={() => setMfaModal(null)}
+                  className="flex-1 py-6 border-4 border-gray-300 text-gray-700 rounded-2xl hover:bg-gray-50 font-bold text-xl transition-colors"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

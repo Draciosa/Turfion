@@ -1,6 +1,6 @@
-import { useState, FormEvent, ChangeEvent } from 'react';
+import { useState, FormEvent, ChangeEvent, useMemo } from 'react';
 import { db } from '../lib/firebase';
-import { collection, addDoc, query, where, getDocs } from 'firebase/firestore';
+import { collection, addDoc } from 'firebase/firestore';
 import { useAuth } from '../contexts/AuthContext';
 
 interface AddCardProps {
@@ -27,58 +27,60 @@ export default function AddCard({ onSuccess }: AddCardProps) {
     closingTime: '23:00',
     pricePerHour: 0,
     description: '',
-    location: ''
+    location: '',
   });
+
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const { user, hasRole } = useAuth();
 
-  // Generate time options from 00:00 to 23:00
-  const generateTimeOptions = () => {
-    const options = [];
-    for (let hour = 0; hour < 24; hour++) {
-      const timeString = `${hour.toString().padStart(2, '0')}:00`;
-      options.push(timeString);
-    }
-    return options;
+  // Memoize time options to avoid regenerating on every render
+  const timeOptions = useMemo(() => {
+    return Array.from({ length: 24 }, (_, i) =>
+      `${i.toString().padStart(2, '0')}:00`
+    );
+  }, []);
+
+  // Capitalize only on blur (more natural typing experience)
+  const capitalizeFirstLetter = (str: string): string => {
+    if (!str) return '';
+    return str.charAt(0).toUpperCase() + str.slice(1);
   };
 
-  const timeOptions = generateTimeOptions();
-
-  // Generate a random 30-character string with lowercase, uppercase, and numbers
-  const generateCardId = (): string => {
-    const chars = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
-    let result = '';
-    for (let i = 0; i < 30; i++) {
-      result += chars.charAt(Math.floor(Math.random() * chars.length));
-    }
-    return result;
+  const handleChange = (
+    e: ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>
+  ) => {
+    const { name, value, type } = e.target;
+    setFormData((prev) => ({
+      ...prev,
+      [name]:
+        type === 'number'
+          ? parseFloat(value) || 0
+          : value,
+    }));
   };
 
-  // Check if Card_ID already exists in database
-  const isCardIdUnique = async (cardId: string): Promise<boolean> => {
-    const q = query(collection(db, 'cards'), where('Card_ID', '==', cardId));
-    const querySnapshot = await getDocs(q);
-    return querySnapshot.empty;
+  // Capitalize on blur instead of on every change
+  const handleCapitalizeBlur = (field: keyof FormData) => () => {
+    setFormData((prev) => ({
+      ...prev,
+      [field]: capitalizeFirstLetter(prev[field]),
+    }));
   };
 
-  // Generate a unique Card_ID that doesn't exist in database
-  const generateUniqueCardId = async (): Promise<string> => {
-    let cardId: string;
-    let isUnique = false;
-    
-    do {
-      cardId = generateCardId();
-      isUnique = await isCardIdUnique(cardId);
-    } while (!isUnique);
-    
-    return cardId;
+  const buildSearchKeywords = (data: FormData): string => {
+    return [data.title, data.type, data.location, data.description]
+      .filter(Boolean)
+      .join(' ')
+      .toLowerCase();
   };
 
   const handleSubmit = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
-    
+    setError('');
+    setSuccess('');
+
     if (!user) {
       setError('You must be logged in to add a card');
       return;
@@ -89,89 +91,63 @@ export default function AddCard({ onSuccess }: AddCardProps) {
       return;
     }
 
+    if (!formData.title.trim() || !formData.type.trim() || !formData.location.trim()) {
+      setError('Title, type, and location are required');
+      return;
+    }
+
     if (formData.pricePerHour <= 0) {
       setError('Price per hour must be greater than 0');
       return;
     }
 
-    if (!formData.title || !formData.type || !formData.location) {
-      setError('Title, type, and location are required');
+    // Basic URL validation for image
+    if (formData.imageUrl && !/^https?:\/\/.+\.(jpg|jpeg|png|gif|webp)/i.test(formData.imageUrl)) {
+      setError('Please enter a valid image URL (jpg, jpeg, png, gif, webp)');
       return;
     }
 
     setIsLoading(true);
-    setError('');
-    setSuccess('');
 
     try {
-      // Generate unique Card_ID
-      const uniqueCardId = await generateUniqueCardId();
-      
       const searchKeywords = buildSearchKeywords(formData);
 
-await addDoc(collection(db, 'cards'), {
-  ...formData,
-  Card_ID: uniqueCardId,
-  userId: user.uid,
-  createdAt: new Date(),
-  updatedAt: new Date(),
+      await addDoc(collection(db, 'cards'), {
+        ...formData,
+        userId: user.uid,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        titleLower: formData.title.toLowerCase(),
+        typeLower: formData.type.toLowerCase(),
+        locationLower: formData.location.toLowerCase(),
+        descriptionLower: formData.description.toLowerCase(),
+        searchKeywords,
+        // Removed custom Card_ID — let Firestore generate secure auto-ID
+      });
 
-  // 🔹 lowercase fields for search
-  titleLower: formData.title.toLowerCase(),
-  typeLower: formData.type.toLowerCase(),
-  locationLower: formData.location.toLowerCase(),
-  descriptionLower: formData.description.toLowerCase(),
-
-  // 🔹 combined field for multi-field search
-  searchKeywords,
-});
-
-      
-      setFormData({ 
-        title: '', 
-        imageUrl: '', 
-        type: '', 
-        openingTime: '00:00', 
+      // Reset form
+      setFormData({
+        title: '',
+        imageUrl: '',
+        type: '',
+        openingTime: '00:00',
         closingTime: '23:00',
         pricePerHour: 0,
         description: '',
-        location: ''
+        location: '',
       });
-      
+
       setSuccess('Card created successfully!');
-      
-      if (onSuccess) {
-        onSuccess();
-      }
-    } catch (error) {
-      console.error('Error adding card:', error);
-      setError('Failed to add card. Please try again.');
+      onSuccess?.();
+    } catch (err: any) {
+      console.error('Error adding card:', err);
+      setError(err.message || 'Failed to add card. Please try again.');
     } finally {
       setIsLoading(false);
     }
   };
 
-  // Build a single lowercase searchKeywords string
-const buildSearchKeywords = (card: FormData) => {
-  return [card.title, card.type, card.location, card.description]
-    .filter(Boolean)
-    .join(' ')
-    .toLowerCase();
-};
-
-
-  const handleChange = (e: ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => {
-    const { name, value, type } = e.target;
-    setFormData((prev: FormData) => ({ 
-      ...prev, 
-      [name]: type === 'number' ? parseFloat(value) || 0 : value 
-    }));
-  };
-
-  const capitalizeFirstLetter = (str: string) => {
-    return str.charAt(0).toUpperCase() + str.slice(1);
-  };
-
+  // Early return for non-admins (only once)
   if (!hasRole('admin')) {
     return (
       <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded-lg">
@@ -181,9 +157,9 @@ const buildSearchKeywords = (card: FormData) => {
   }
 
   return (
-    <div className="bg-white rounded-xl shadow-lg p-6">
-      <h3 className="text-xl font-semibold mb-6 text-gray-900">Add New Card</h3>
-      
+    <div className="bg-white rounded-xl shadow-lg p-6 max-w-2xl mx-auto">
+      <h3 className="text-2xl font-bold mb-6 text-gray-900">Add New Venue</h3>
+
       <form onSubmit={handleSubmit} className="space-y-6">
         {error && (
           <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded-lg">
@@ -196,26 +172,24 @@ const buildSearchKeywords = (card: FormData) => {
             {success}
           </div>
         )}
-        
+
         <div>
           <label htmlFor="title" className="block text-sm font-medium text-gray-700 mb-2">
-            Title *
+            Title <span className="text-red-500">*</span>
           </label>
           <input
             type="text"
             id="title"
             name="title"
-            placeholder="Enter card title"
             value={formData.title}
-            onChange={(e) => {
-              const capitalizedValue = capitalizeFirstLetter(e.target.value);
-              setFormData(prev => ({ ...prev, title: capitalizedValue }));
-            }}
+            onChange={handleChange}
+            onBlur={handleCapitalizeBlur('title')}
+            placeholder="Enter venue title"
             required
-            className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200"
+            className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all"
           />
         </div>
-        
+
         <div>
           <label htmlFor="imageUrl" className="block text-sm font-medium text-gray-700 mb-2">
             Image URL
@@ -224,49 +198,48 @@ const buildSearchKeywords = (card: FormData) => {
             type="url"
             id="imageUrl"
             name="imageUrl"
-            placeholder="https://example.com/image.jpg"
             value={formData.imageUrl}
             onChange={handleChange}
-            className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200"
+            placeholder="https://example.com/venue.jpg"
+            className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all"
           />
-        </div>
-        
-        <div>
-          <label htmlFor="type" className="block text-sm font-medium text-gray-700 mb-2">
-            Type *
-          </label>
-          <input
-            type="text"
-            id="type"
-            name="type"
-            placeholder="e.g., Football, Cricket, Tennis"
-            value={formData.type}
-            onChange={(e) => {
-              const capitalizedValue = capitalizeFirstLetter(e.target.value);
-              setFormData(prev => ({ ...prev, type: capitalizedValue }));
-            }}
-            required
-            className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200"
-          />
+          <p className="text-xs text-gray-500 mt-1">Supported: jpg, jpeg, png, gif, webp</p>
         </div>
 
-        <div>
-          <label htmlFor="location" className="block text-sm font-medium text-gray-700 mb-2">
-            Location *
-          </label>
-          <input
-            type="text"
-            id="location"
-            name="location"
-            placeholder="e.g., Banjara Hills, Hyderabad"
-            value={formData.location}
-            onChange={(e) => {
-              const capitalizedValue = capitalizeFirstLetter(e.target.value);
-              setFormData(prev => ({ ...prev, location: capitalizedValue }));
-            }}
-            required
-            className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200"
-          />
+        <div className="grid grid-cols-2 gap-4">
+          <div>
+            <label htmlFor="type" className="block text-sm font-medium text-gray-700 mb-2">
+              Type <span className="text-red-500">*</span>
+            </label>
+            <input
+              type="text"
+              id="type"
+              name="type"
+              value={formData.type}
+              onChange={handleChange}
+              onBlur={handleCapitalizeBlur('type')}
+              placeholder="e.g., Football"
+              required
+              className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all"
+            />
+          </div>
+
+          <div>
+            <label htmlFor="location" className="block text-sm font-medium text-gray-700 mb-2">
+              Location <span className="text-red-500">*</span>
+            </label>
+            <input
+              type="text"
+              id="location"
+              name="location"
+              value={formData.location}
+              onChange={handleChange}
+              onBlur={handleCapitalizeBlur('location')}
+              placeholder="e.g., Banjara Hills"
+              required
+              className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all"
+            />
+          </div>
         </div>
 
         <div>
@@ -276,32 +249,29 @@ const buildSearchKeywords = (card: FormData) => {
           <textarea
             id="description"
             name="description"
-            placeholder="Describe the venue, facilities, and amenities..."
             value={formData.description}
-            onChange={(e) => {
-              const capitalizedValue = capitalizeFirstLetter(e.target.value);
-              setFormData(prev => ({ ...prev, description: capitalizedValue }));
-            }}
+            onChange={handleChange}
+            onBlur={handleCapitalizeBlur('description')}
             rows={4}
-            className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200"
+            placeholder="Describe facilities, surface type, amenities..."
+            className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all resize-none"
           />
         </div>
 
         <div>
           <label htmlFor="pricePerHour" className="block text-sm font-medium text-gray-700 mb-2">
-            Price per Hour (₹) *
+            Price per Hour (₹) <span className="text-red-500">*</span>
           </label>
           <input
             type="number"
             id="pricePerHour"
             name="pricePerHour"
-            placeholder="Enter price per hour"
             value={formData.pricePerHour || ''}
             onChange={handleChange}
             min="1"
             step="1"
             required
-            className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200"
+            className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all"
           />
         </div>
 
@@ -315,10 +285,12 @@ const buildSearchKeywords = (card: FormData) => {
               name="openingTime"
               value={formData.openingTime}
               onChange={handleChange}
-              className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200"
+              className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all"
             >
-              {timeOptions.map(time => (
-                <option key={time} value={time}>{time}</option>
+              {timeOptions.map((time) => (
+                <option key={time} value={time}>
+                  {time}
+                </option>
               ))}
             </select>
           </div>
@@ -332,21 +304,23 @@ const buildSearchKeywords = (card: FormData) => {
               name="closingTime"
               value={formData.closingTime}
               onChange={handleChange}
-              className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200"
+              className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all"
             >
-              {timeOptions.map(time => (
-                <option key={time} value={time}>{time}</option>
+              {timeOptions.map((time) => (
+                <option key={time} value={time}>
+                  {time}
+                </option>
               ))}
             </select>
           </div>
         </div>
-        
-        <button 
-          type="submit" 
+
+        <button
+          type="submit"
           disabled={isLoading}
-          className="w-full bg-gradient-to-r from-blue-600 to-purple-600 text-white py-3 px-6 rounded-lg hover:from-blue-700 hover:to-purple-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200 font-medium"
+          className="w-full bg-gradient-to-r from-blue-600 to-purple-600 text-white font-semibold py-3 rounded-lg hover:from-blue-700 hover:to-purple-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200"
         >
-          {isLoading ? 'Adding Card...' : 'Add Card'}
+          {isLoading ? 'Adding Venue...' : 'Add Venue'}
         </button>
       </form>
     </div>
